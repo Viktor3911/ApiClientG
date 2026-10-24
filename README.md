@@ -1,128 +1,124 @@
 # g-api-view
 
-Клиент для работы с Gemini API через FastAPI сервер.
-
-[![Python Version](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+Python-клиент сервера ApiServerG: доступ к Google Gemini по API-ключу.
+Синхронный и асинхронный, с типизированными ответами и ошибками.
 
 ## Установка
-
-### Установка из GitHub (после создания тега)
-
-```bash
-pip install git+https://github.com/Viktor3911/ApiClientG.git@v0.1.0
-```
-
-Или для установки последней версии из ветки main:
 
 ```bash
 pip install git+https://github.com/Viktor3911/ApiClientG.git
 ```
 
-### Установка из локальной директории (для разработки)
+Конкретная версия — по тегу: `...ApiClientG.git@v1.0.0`. Нужен Python 3.9+.
 
-```bash
-pip install -e .
+## Настройка
+
+Ключ вида `asg_…` выдаёт администратор сервера (команда бота `/create_api_key`).
+Регистрации, логина и пароля нет. Ключ и адрес сервера удобно держать в `.env`
+в папке, откуда запускается программа (образец — `.env.example`):
+
+```dotenv
+G_API_KEY=asg_...
+G_API_URL=http://127.0.0.1:8000
 ```
+
+Их читает `g_api_view.Settings`. Переменные окружения важнее `.env`, а аргументы
+`Client(api_key=..., base_url=...)` важнее обоих. Адреса по умолчанию нет.
 
 ## Использование
 
-### Простой способ - через класс Client
-
 ```python
 from g_api_view import Client
 
-# Создание клиента (автоматически регистрирует пользователя)
-client = Client(
-    server_url="http://10.61.17.80:8000",
-    user_id=123,
-    password="your_password"
-)
+with Client() as client:  # ключ и адрес из .env
+    print(client.ask("Привет!"))
 
-# Генерация текста
-response = client.generate("Привет, как дела?")
-print(response.get("answer"))
+    result = client.generate(
+        "Что на картинке и в документе?",
+        files=["photo.jpg", ("notes.txt", b"текст")],
+        model="gemini-3.8-flash",
+        system_instruction="Отвечай кратко",
+        search=True,
+    )
+    print(result.answer, result.tokens_used)
+    for source in result.sources:
+        print(source.title, source.url)
 
-# Или получить только текст ответа
-answer = client.get_answer("Напиши историю про Машу")
-print(answer)
-
-# Очистка контекста
-client.clear_context()
-
-# Получение списка доступных моделей
-models = client.list_models()
-print(models)
+    client.clear_context()  # следующий запрос начнёт новый диалог
 ```
 
-### Без автоматической регистрации
+Асинхронно — то же самое через `AsyncClient`:
 
 ```python
-from g_api_view import Client
+from g_api_view import AsyncClient
 
-client = Client(
-    server_url="http://10.61.17.80:8000",
-    user_id=123,
-    password="your_password",
-    auto_register=False  # Отключить автоматическую регистрацию
-)
-
-# Регистрация вручную
-registration_result = client.register()
-print(registration_result)
+async with AsyncClient() as client:  # ключ и адрес из .env
+    answer = await client.ask("Привет!")
 ```
 
-### Использование с файлами
+Сервер помнит историю диалога: каждый `generate()` продолжает её, пока не
+вызван `clear_context()`.
+
+## Методы
+
+| Метод | Что делает |
+| --- | --- |
+| `generate(text, files=(), model=None, system_instruction=None, search=False)` | Ответ модели: `GenerateResult` |
+| `ask(text, **kwargs)` | То же, но только текст ответа |
+| `clear_context()` | Очистить историю диалога |
+| `list_models()` | Доступные модели: `Model(index, name, code)` |
+| `me()` | ID пользователя, которому принадлежит ключ |
+| `health()` | `True`, если сервер отвечает |
+
+- `model` — код (`gemini-3.8-flash`) или название из `list_models()`; без него
+  берётся модель номер 1.
+- `files` — пути к файлам или пары `(имя, содержимое)`. Имя важно: по расширению
+  сервер определяет тип файла. Всё тело запроса — не больше 100 МБ.
+- `GenerateResult.grounding_links` — ссылки поиска так, как их отдаёт сервер
+  (HTML-строки для Telegram); `GenerateResult.sources` — те же ссылки как пары
+  `title`, `url`.
+
+Параметры `Client`: `api_key`, `base_url`, `timeout` (по умолчанию 360 секунд на
+ответ и 15 на соединение: рассуждения модели идут минутами), `language` (`ru`
+или `en` — язык текстов ошибок). Прокси берётся из `HTTPS_PROXY`.
+
+## Ошибки
+
+Все исключения наследуют `GApiError`. Ошибка от сервера — `APIStatusError` с
+полями `status_code`, `code` (числовой код сервера), `detail` (текст) и
+`request_id` (для поиска в логах сервера).
+
+| Исключение | Когда |
+| --- | --- |
+| `AuthenticationError` | 401: нет ключа, ключ неверный или отозван |
+| `PermissionDeniedError` | 403: например, учётная запись отключена |
+| `NotFoundError` | 404: например, неизвестная модель |
+| `RequestTooLargeError` | 413: файлы больше лимита |
+| `ValidationError` | 422: неверные параметры, подробности в `errors` |
+| `RateLimitError` | 429: исчерпана квота у Gemini |
+| `FilesUnavailableError` | код 35: очистите контекст и приложите файлы заново |
+| `ServerError` | 5xx |
+| `APITimeoutError`, `APIConnectionError` | сервер не ответил или недоступен |
 
 ```python
-from g_api_view import Client
+from g_api_view import Client, GApiError, RateLimitError
 
-client = Client(
-    server_url="http://10.61.17.80:8000",
-    user_id=123,
-    password="your_password"
-)
-
-# Генерация с файлами
-response = client.generate(
-    message_text="Проанализируй эти файлы",
-    file_paths=["/path/to/file1.pdf", "/path/to/file2.jpg"],
-    model_name="Gemini 2 Flash",
-    flag_search=True,
-    system_instruction="Ты помощник для анализа документов"
-)
+try:
+    answer = Client().ask("Привет!")
+except RateLimitError:
+    ...  # подождать и повторить
+except GApiError as error:
+    print("Не получилось:", error)
 ```
 
-### Старый способ (для обратной совместимости)
+## Разработка
 
-```python
-import g_api_view
-
-# Настройка через settings.py (не рекомендуется)
-print(g_api_view.reg())
-print(g_api_view.generate(message_text='ку'))
-g_api_view.clear_context()
+```bash
+uv sync
+uv run pytest
+uv run ruff check .
+uv build  # wheel и sdist в dist/
 ```
-
-## Параметры Client
-
-- `server_url` (str): Базовый URL сервера (обязательно)
-- `user_id` (int): ID пользователя (обязательно)
-- `password` (str): Пароль пользователя (обязательно)
-- `auto_register` (bool): Автоматически регистрировать пользователя при создании (по умолчанию True)
-
-## Методы Client
-
-- `register()` - Регистрация пользователя на сервере
-- `generate(message_text, file_paths=None, flag_search=False, system_instruction="", model_name="Gemini 2 Flash")` - Генерация ответа
-- `get_answer(message_text, **kwargs)` - Получить только текст ответа
-- `clear_context()` - Очистка контекста диалога
-- `list_models()` - Получение списка доступных моделей
-
-## Требования
-
-- Python >= 3.7
-- requests >= 2.32.3
 
 ## Лицензия
 
