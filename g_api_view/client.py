@@ -223,7 +223,7 @@ class Client(_BaseClient):
 
     def list_models(self) -> list[Model]:
         """Модели, доступные клиентам, по порядку."""
-        return _models(self._request("POST", "/list_models"))
+        return _models(self._request("GET", "/list_models"))
 
     def me(self) -> int:
         """ID пользователя, которому принадлежит ключ."""
@@ -304,7 +304,7 @@ class AsyncClient(_BaseClient):
 
     async def list_models(self) -> list[Model]:
         """Модели, доступные клиентам, по порядку."""
-        return _models(await self._request("POST", "/list_models"))
+        return _models(await self._request("GET", "/list_models"))
 
     async def me(self) -> int:
         """ID пользователя, которому принадлежит ключ."""

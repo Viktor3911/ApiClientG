@@ -205,6 +205,8 @@ def test_models_context_and_health():
         Model(index=1, name="Gemini 3.8 Flash", code="a"),
         Model(index=3, name="Gemma 4", code="b"),
     ]
+    listed = server.requests[0]
+    assert (listed.method, listed.url.path) == ("GET", "/api/list_models")
     client.clear_context()
 
     cleared = server.requests[-1]
@@ -327,3 +329,16 @@ def test_async_client_uploads_files(tmp_path):
         ("notes.txt", "заметки".encode(), "text/plain"),
         ("photo.png", b"\x89PNG", "image/png"),
     ]
+
+
+def test_async_client_lists_models_with_get():
+    server = Server(reply({"models": []}))
+
+    async def run():
+        async with AsyncClient(
+            KEY, base_url="http://api.test", transport=httpx.MockTransport(server)
+        ) as client:
+            return await client.list_models()
+
+    assert asyncio.run(run()) == []
+    assert server.requests[0].method == "GET"
